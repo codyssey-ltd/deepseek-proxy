@@ -120,7 +120,35 @@ class ReasoningStore:
             """
         )
         self._conn.commit()
+        self._migrate_global_keys()
         self.prune()
+
+    def _migrate_global_keys(self) -> None:
+        """One-time migration: backfill scope-independent tool_call_global keys.
+
+        When recovery trims the conversation context, new reasoning is stored
+        under the trimmed-context scope hash.  Subsequent requests arrive with
+        the full history, so the scope hashes differ and the cache misses —
+        triggering another recovery endlessly.  Scope-independent keys break
+        this loop: reasoning is findable even when surrounding context changed.
+
+        Safe to run on every startup — INSERT OR IGNORE skips existing rows.
+        """
+        with self._lock:
+            self._conn.execute(
+                """
+                INSERT OR IGNORE INTO reasoning_cache(key, reasoning, message_json, created_at)
+                SELECT
+                    'tool_call_global:' || SUBSTR(key, INSTR(key, ':tool_call:') + 11),
+                    reasoning,
+                    message_json,
+                    created_at
+                FROM reasoning_cache
+                WHERE key LIKE 'scope:%:tool_call:%'
+                  AND key NOT LIKE '%:tool_call_signature:%'
+                """
+            )
+            self._conn.commit()
 
     def close(self) -> None:
         with self._lock:
@@ -172,6 +200,13 @@ class ReasoningStore:
             for tool_call in (message.get("tool_calls") or [])
             if isinstance(tool_call, dict)
         )
+        # Scope-independent keys: allow retrieval when conversation scope changes
+        # due to recovery context trimming (the primary cause of the recovery loop).
+        # tool_call IDs are DeepSeek-assigned UUIDs with negligible collision risk.
+        keys.extend(
+            f"tool_call_global:{tool_call_id}"
+            for tool_call_id in tool_call_ids(message)
+        )
         for key in keys:
             self.put(key, reasoning, message)
         return len(keys)
@@ -190,6 +225,13 @@ class ReasoningStore:
             reasoning = self.get(
                 f"scope:{scope}:tool_call_signature:{tool_call_signature(tool_call)}"
             )
+            if reasoning is not None:
+                return reasoning
+        # Scope-independent fallback: catches cases where the conversation scope
+        # changed due to prior recovery trimming (different context hash on each
+        # request after recovery).
+        for tool_call_id in tool_call_ids(message):
+            reasoning = self.get(f"tool_call_global:{tool_call_id}")
             if reasoning is not None:
                 return reasoning
         return None
