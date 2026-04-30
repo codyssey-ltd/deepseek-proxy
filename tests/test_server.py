@@ -3,6 +3,7 @@ from __future__ import annotations
 from io import BytesIO
 import gzip
 import json
+from pathlib import Path
 from types import SimpleNamespace
 import unittest
 import zlib
@@ -80,6 +81,8 @@ class ServerTests(unittest.TestCase):
                 "--no-verbose",
                 "--no-display-reasoning",
                 "--cors",
+                "--trace-dir",
+                "/tmp/dcp-traces",
             ]
         )
 
@@ -87,6 +90,7 @@ class ServerTests(unittest.TestCase):
         self.assertFalse(args.verbose)
         self.assertFalse(args.display_reasoning)
         self.assertTrue(args.cors)
+        self.assertEqual(args.trace_dir, Path("/tmp/dcp-traces"))
 
     def test_read_response_body_handles_gzip(self) -> None:
         body = gzip.compress(b'{"ok":true}')
@@ -145,7 +149,7 @@ class ServerTests(unittest.TestCase):
         finally:
             handler.server.reasoning_store.close()
 
-        self.assertFalse(sent)
+        self.assertFalse(sent.sent)
         self.assertIn("sending upstream response body", "\n".join(captured.output))
 
     def test_streaming_response_stops_on_client_disconnect(self) -> None:
@@ -178,7 +182,7 @@ class ServerTests(unittest.TestCase):
         finally:
             handler.server.reasoning_store.close()
 
-        self.assertFalse(sent)
+        self.assertFalse(sent.sent)
         self.assertEqual(response.readline_calls, 1)
         self.assertIn("sending streaming response chunk", "\n".join(captured.output))
 
@@ -196,7 +200,7 @@ class ServerTests(unittest.TestCase):
         finally:
             handler.server.reasoning_store.close()
 
-        self.assertFalse(sent)
+        self.assertFalse(sent.sent)
         self.assertIn(
             "upstream streaming response read failed",
             "\n".join(captured.output),
