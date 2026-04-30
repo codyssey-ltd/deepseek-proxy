@@ -412,6 +412,21 @@ def reasoning_lookup_keys(
             for tool_call in (message.get("tool_calls") or [])
             if isinstance(tool_call, dict)
         )
+    # Scope-independent fallback: catches cases where the conversation scope
+    # changed due to prior recovery trimming (different context hash on each
+    # request after recovery). This is the last resort lookup.
+    # Include cache_namespace to maintain authorization isolation.
+    global_key_prefix = f"tool_call_global:{cache_namespace}:" if cache_namespace else "tool_call_global:"
+    keys.extend(
+        {
+            "kind": "tool_call_global",
+            "tool_call_id": tool_call_id,
+            "key": f"{global_key_prefix}{tool_call_id}",
+            "portable": False,
+            "hit": False,
+        }
+        for tool_call_id in tool_call_ids(message)
+    )
     return keys
 
 

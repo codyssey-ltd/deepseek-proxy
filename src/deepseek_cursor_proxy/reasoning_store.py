@@ -203,6 +203,8 @@ class ReasoningStore:
         Safe to run on every startup — INSERT OR IGNORE skips existing rows.
         """
         with self._lock:
+            # Migrate to new namespace-aware format: tool_call_global:{namespace}:{tool_call_id}
+            # For entries with no namespace, use: tool_call_global:{tool_call_id}
             self._conn.execute(
                 """
                 INSERT OR IGNORE INTO reasoning_cache(key, reasoning, message_json, created_at)
@@ -272,8 +274,10 @@ class ReasoningStore:
         # Scope-independent keys: allow retrieval when conversation scope changes
         # due to recovery context trimming (the primary cause of the recovery loop).
         # tool_call IDs are DeepSeek-assigned UUIDs with negligible collision risk.
+        # Include cache_namespace to maintain authorization isolation.
+        global_key_prefix = f"tool_call_global:{cache_namespace}:" if cache_namespace else "tool_call_global:"
         keys.extend(
-            f"tool_call_global:{tool_call_id}"
+            f"{global_key_prefix}{tool_call_id}"
             for tool_call_id in tool_call_ids(message)
         )
         keys = list(dict.fromkeys(keys))
@@ -300,8 +304,10 @@ class ReasoningStore:
         # Scope-independent fallback: catches cases where the conversation scope
         # changed due to prior recovery trimming (different context hash on each
         # request after recovery).
+        # Include cache_namespace to maintain authorization isolation.
+        global_key_prefix = f"tool_call_global:{cache_namespace}:" if cache_namespace else "tool_call_global:"
         for tool_call_id in tool_call_ids(message):
-            reasoning = self.get(f"tool_call_global:{tool_call_id}")
+            reasoning = self.get(f"{global_key_prefix}{tool_call_id}")
             if reasoning is not None:
                 return reasoning
         return None
